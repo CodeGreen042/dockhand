@@ -1,0 +1,83 @@
+name: 🏭 Build Dockhand
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  setup:
+    runs-on: [self-hosted, amd64]
+    outputs:
+      short_sha: ${{ steps.vars.outputs.short_sha }}
+      date_tag: ${{ steps.vars.outputs.date_tag }}
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🧮 Calculate Vars
+        id: vars
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          
+          echo "Znaleziono hash: $SHORT_SHA"
+    
+          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+
+  build-amd64:
+    needs: setup
+    runs-on: [self-hosted, amd64]
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🏗️ Build AMD64
+        run: |
+          TAG=${{ needs.setup.outputs.short_sha }}
+
+          docker build \
+            --provenance=false \
+            --platform linux/amd64 \
+            -t ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME }}:${TAG}-amd64 .
+          
+          docker push ${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME }}:${TAG}-amd64
+
+  # merge-manifest:
+  #   needs: [setup, build-amd64]
+  #   runs-on: [self-hosted, arm64]
+  #   steps:
+  #     - name: 🪄 Create Manifests
+  #       run: |
+  #         TAG=${{ needs.setup.outputs.short_sha }}
+  #         BASE_IMG=${{ secrets.REGISTRY_URL }}/${{ secrets.IMAGE_NAME }}
+          
+  #         echo "Sklejam tag: ${TAG}..."
+          
+  #         # 1. Tworzymy główny manifest z hashem (np. moj-sklep:a1b2c3d)
+  #         # To jest ten "bezpieczny", unikalny tag
+  #         docker manifest create ${BASE_IMG}:${TAG} \
+  #           ${BASE_IMG}:${TAG}-amd64 \
+  #           ${BASE_IMG}:${TAG}-arm64
+            
+  #         # Adnotacje (żeby docker wiedział co jest co)
+  #         docker manifest annotate ${BASE_IMG}:${TAG} ${BASE_IMG}:${TAG}-amd64 --os linux --arch amd64
+  #         docker manifest annotate ${BASE_IMG}:${TAG} ${BASE_IMG}:${TAG}-arm64 --os linux --arch arm64
+          
+  #         # Wypychamy unikalny tag
+  #         docker manifest push ${BASE_IMG}:${TAG}
+          
+  #         # 2. (Opcjonalnie) Aktualizujemy tag 'latest'
+  #         # Żebyś mógł robić `docker pull ...:latest` jak leniwa buła
+  #         echo "Aktualizuję latest..."
+  #         docker manifest create --amend ${BASE_IMG}:latest \
+  #           ${BASE_IMG}:${TAG}-amd64 \
+  #           ${BASE_IMG}:${TAG}-arm64
+            
+  #         docker manifest annotate ${BASE_IMG}:latest ${BASE_IMG}:${TAG}-amd64 --os linux --arch amd64
+  #         docker manifest annotate ${BASE_IMG}:latest ${BASE_IMG}:${TAG}-arm64 --os linux --arch arm64
+          
+  #         docker manifest push ${BASE_IMG}:latest
+          
+  #         echo "✅ Gotowe! Masz dwa tagi:"
+  #         echo "   👉 ${BASE_IMG}:${TAG} (Bezpieczny, konkretny commit)"
+  #         echo "   👉 ${BASE_IMG}:latest (Zawsze najnowszy)"
