@@ -7,7 +7,6 @@ on:
 
 jobs:
   setup:
-    runs-on: [self-hosted, amd64]
     outputs:
       short_sha: ${{ steps.vars.outputs.short_sha }}
       date_tag: ${{ steps.vars.outputs.date_tag }}
@@ -26,7 +25,6 @@ jobs:
 
   build-amd64:
     needs: setup
-    runs-on: [self-hosted, amd64]
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@v4
