@@ -695,6 +695,7 @@ export interface ContainerInfo {
 	mounts: Array<{ type: string; source: string; destination: string; mode: string; rw: boolean }>;
 	labels: { [key: string]: string };
 	command: string;
+	networkMode: string;
 }
 
 export interface ImageInfo {
@@ -727,7 +728,7 @@ export async function listContainers(all = true, envId?: number | null): Promise
 		})
 	);
 
-	return containers.map((container) => {
+	const result = containers.map((container) => {
 		// Extract network info with IP addresses
 		const networks: { [networkName: string]: { ipAddress: string } } = {};
 		if (container.NetworkSettings?.Networks) {
@@ -771,9 +772,30 @@ export async function listContainers(all = true, envId?: number | null): Promise
 			mounts,
 			labels: container.Labels || {},
 			command: container.Command || '',
-			systemContainer: isSystemContainer(container.Image || '')
+			systemContainer: isSystemContainer(container.Image || ''),
+			networkMode: container.HostConfig?.NetworkMode || ''
 		};
 	});
+
+	// Resolve IPs for containers using network_mode: "service:X" or "container:X"
+	// Docker translates "service:X" to "container:<container_id>" in HostConfig.NetworkMode
+	const containerById = new Map(result.map(c => [c.id, c]));
+	const containerByName = new Map(result.map(c => [c.name, c]));
+
+	for (const container of result) {
+		const networkMode = container.networkMode;
+		if (networkMode && networkMode.startsWith('container:') && Object.keys(container.networks).length === 0) {
+			const refIdOrName = networkMode.substring('container:'.length);
+			// Look up the referenced container by ID first, then by name
+			const refContainer = containerById.get(refIdOrName) || containerByName.get(refIdOrName);
+			if (refContainer && Object.keys(refContainer.networks).length > 0) {
+				// Copy the network info from the referenced container
+				container.networks = { ...refContainer.networks };
+			}
+		}
+	}
+
+	return result;
 }
 
 export async function getContainerStats(id: string, envId?: number | null) {
