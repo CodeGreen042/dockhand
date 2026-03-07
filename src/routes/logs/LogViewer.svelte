@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { RefreshCw, Copy, Download, WrapText, ArrowDownToLine, Search, ChevronUp, ChevronDown, X, Type } from 'lucide-svelte';
+	import { copyToClipboard } from '$lib/utils/clipboard';
 	import * as Select from '$lib/components/ui/select';
 	import { themeStore } from '$lib/stores/theme';
 	import { getMonospaceFont } from '$lib/themes';
@@ -32,6 +33,9 @@
 	let wordWrap = $state(true);
 	let fontSize = $state(12);
 
+	// RAF-based auto-scroll
+	let scrollRafPending = false;
+
 	// Search state
 	let logSearchActive = $state(false);
 	let logSearchQuery = $state('');
@@ -50,20 +54,20 @@
 	// Auto-scroll when logs change
 	$effect(() => {
 		if (autoScroll && logsRef && logs) {
-			setTimeout(() => {
-				logsRef.scrollTop = logsRef.scrollHeight;
-			}, 50);
+			if (!scrollRafPending) {
+				scrollRafPending = true;
+				requestAnimationFrame(() => {
+					if (logsRef) logsRef.scrollTop = logsRef.scrollHeight;
+					scrollRafPending = false;
+				});
+			}
 		}
 	});
 
 	// Copy logs to clipboard
 	async function copyLogs() {
 		if (logs) {
-			try {
-				await navigator.clipboard.writeText(logs);
-			} catch (err) {
-				console.error('Failed to copy:', err);
-			}
+			await copyToClipboard(logs);
 		}
 	}
 

@@ -150,9 +150,14 @@
 			}
 
 			scanResults = discovered;
+			const skippedCount = (data.skipped || []).length;
 
 			if (discovered.length === 0) {
-				toast.info('No compose stacks found in this directory');
+				if (skippedCount > 0) {
+					toast.info(`All ${skippedCount} stack(s) in this directory are already adopted`);
+				} else {
+					toast.info('No compose stacks found in this directory');
+				}
 			} else {
 				const selections = new Map<string, boolean>();
 				for (const stack of discovered) {
@@ -182,7 +187,8 @@
 
 		try {
 			const parentDir = entry.path.replace(/\/[^/]+$/, '');
-			const stackName = parentDir.split('/').pop() || 'adopted-stack';
+			const rawName = parentDir.split('/').pop() || 'adopted-stack';
+			const stackName = rawName.toLowerCase().replace(/[^a-z0-9_-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'adopted-stack';
 			const envFilePath = `${parentDir}/.env`;
 
 			const stack: DiscoveredStack = {

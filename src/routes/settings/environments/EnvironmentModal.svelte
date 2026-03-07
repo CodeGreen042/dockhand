@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { toast } from 'svelte-sonner';
+	import { readJobResponse } from '$lib/utils/sse-fetch';
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
 	import * as Dialog from '$lib/components/ui/dialog';
@@ -57,7 +58,8 @@
 		X,
 		Tags,
 		ChevronDown,
-		ChevronRight
+		ChevronRight,
+		XCircle
 	} from 'lucide-svelte';
 	import * as Tooltip from '$lib/components/ui/tooltip';
 	import * as Alert from '$lib/components/ui/alert';
@@ -70,6 +72,7 @@
 	import { TogglePill, ToggleGroup } from '$lib/components/ui/toggle-pill';
 	import { ShieldOff } from 'lucide-svelte';
 	import { focusFirstInput } from '$lib/utils';
+	import { copyToClipboard } from '$lib/utils/clipboard';
 	import { authStore, canAccess } from '$lib/stores/auth';
 	import { licenseStore } from '$lib/stores/license';
 	import { formatDateTime, formatDate } from '$lib/stores/settings';
@@ -260,6 +263,10 @@
 	let formCollectActivity = $state(true);
 	let formCollectMetrics = $state(true);
 	let formHighlightChanges = $state(true);
+	let formDiskWarningEnabled = $state(true);
+	let formDiskWarningMode = $state<'percentage' | 'absolute'>('percentage');
+	let formDiskWarningThreshold = $state(80);
+	let formDiskWarningThresholdGb = $state(50);
 	let formConnectionType = $state<ConnectionType>('socket');
 	let formHawserToken = $state('');
 	let formLabels = $state<string[]>([]);
@@ -321,8 +328,8 @@
 	let hawserTokenLoading = $state(false);
 	let generatingToken = $state(false);
 	let generatedToken = $state<string | null>(null); // Full token shown once after generation
-	let copySuccess = $state(false);
-	let copyCmdSuccess = $state(false);
+	let copySuccess = $state<'ok' | 'error' | null>(null);
+	let copyCmdSuccess = $state<'ok' | 'error' | null>(null);
 	// For add mode - auto-generated token stored until save
 	let pendingToken = $state<string | null>(null);
 
@@ -443,6 +450,7 @@
 			loadUpdateCheckSettings(environment.id);
 			loadImagePruneSettings(environment.id);
 			loadTimezone(environment.id);
+			loadDiskWarningSettings(environment.id);
 			// Load Hawser token if edge mode
 			if (formConnectionType === 'hawser-edge') {
 				loadHawserToken(environment.id);
@@ -461,6 +469,10 @@
 			formCollectActivity = true;
 			formCollectMetrics = true;
 			formHighlightChanges = true;
+			formDiskWarningEnabled = true;
+			formDiskWarningMode = 'percentage';
+			formDiskWarningThreshold = 80;
+			formDiskWarningThresholdGb = 50;
 			formConnectionType = 'socket';
 			formHawserToken = '';
 			formLabels = [];
@@ -699,6 +711,7 @@
 				// Save timezone if not default
 				if (newEnv?.id) {
 					await saveTimezone(newEnv.id);
+					await saveDiskWarningSettings(newEnv.id);
 				}
 				onSaved();
 				onClose();
@@ -772,6 +785,7 @@
 				await saveUpdateCheckSettings(environment.id);
 				await saveImagePruneSettings(environment.id);
 				await saveTimezone(environment.id);
+				await saveDiskWarningSettings(environment.id);
 				toast.success(`Updated environment: ${formName}`);
 				onSaved();
 				onClose();
@@ -783,6 +797,39 @@
 			formError = 'Failed to update environment';
 		} finally {
 			formSaving = false;
+		}
+	}
+
+	// === Disk Warning Functions ===
+	async function loadDiskWarningSettings(envId: number) {
+		try {
+			const response = await fetch(`/api/environments/${envId}/disk-warning`);
+			if (response.ok) {
+				const data = await response.json();
+				formDiskWarningEnabled = data.enabled ?? true;
+				formDiskWarningMode = data.mode ?? 'percentage';
+				formDiskWarningThreshold = data.threshold ?? 80;
+				formDiskWarningThresholdGb = data.thresholdGb ?? 50;
+			}
+		} catch (error) {
+			console.error('Failed to load disk warning settings:', error);
+		}
+	}
+
+	async function saveDiskWarningSettings(envId: number) {
+		try {
+			await fetch(`/api/environments/${envId}/disk-warning`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					enabled: formDiskWarningEnabled,
+					mode: formDiskWarningMode,
+					threshold: formDiskWarningThreshold,
+					thresholdGb: formDiskWarningThresholdGb
+				})
+			});
+		} catch (error) {
+			console.error('Failed to save disk warning settings:', error);
 		}
 	}
 
@@ -1068,18 +1115,9 @@
 				throw new Error('Failed to pull Grype image');
 			}
 
-			// Read SSE stream to completion
-			const reader = response.body?.getReader();
-			if (reader) {
-				const decoder = new TextDecoder();
-				while (true) {
-					const { done, value } = await reader.read();
-					if (done) break;
-					const text = decoder.decode(value, { stream: true });
-					if (text.includes('"status":"error"')) {
-						throw new Error('Pull failed');
-					}
-				}
+			const result = await readJobResponse(response);
+			if (result.success === false) {
+				throw new Error(result.error as string || 'Pull failed');
 			}
 
 			// Refresh scanner status after pull
@@ -1109,18 +1147,9 @@
 				throw new Error('Failed to pull Trivy image');
 			}
 
-			// Read SSE stream to completion
-			const reader = response.body?.getReader();
-			if (reader) {
-				const decoder = new TextDecoder();
-				while (true) {
-					const { done, value } = await reader.read();
-					if (done) break;
-					const text = decoder.decode(value, { stream: true });
-					if (text.includes('"status":"error"')) {
-						throw new Error('Pull failed');
-					}
-				}
+			const result = await readJobResponse(response);
+			if (result.success === false) {
+				throw new Error(result.error as string || 'Pull failed');
 			}
 
 			// Refresh scanner status after pull
@@ -1268,17 +1297,17 @@
 		await generateHawserToken(envId);
 	}
 
-	function copyToken(token: string) {
-		navigator.clipboard.writeText(token);
-		copySuccess = true;
-		setTimeout(() => { copySuccess = false; }, 2000);
+	async function copyToken(token: string) {
+		const ok = await copyToClipboard(token);
+		copySuccess = ok ? 'ok' : 'error';
+		setTimeout(() => { copySuccess = null; }, 2000);
 	}
 
-	function copyCommand(token: string) {
+	async function copyCommand(token: string) {
 		const cmd = `DOCKHAND_SERVER_URL=${getConnectionUrl()} TOKEN=${token} hawser`;
-		navigator.clipboard.writeText(cmd);
-		copyCmdSuccess = true;
-		setTimeout(() => { copyCmdSuccess = false; }, 2000);
+		const ok = await copyToClipboard(cmd);
+		copyCmdSuccess = ok ? 'ok' : 'error';
+		setTimeout(() => { copyCmdSuccess = null; }, 2000);
 	}
 
 	function getConnectionUrl() {
@@ -1883,7 +1912,14 @@
 														class="font-mono text-xs flex-1"
 													/>
 													<Button variant="outline" size="sm" onclick={() => copyToken(pendingToken!)}>
-														{#if copySuccess}
+														{#if copySuccess === 'error'}
+															<Tooltip.Root open>
+																<Tooltip.Trigger>
+																	<XCircle class="w-4 h-4 text-red-500" />
+																</Tooltip.Trigger>
+																<Tooltip.Content>Copy requires HTTPS</Tooltip.Content>
+															</Tooltip.Root>
+														{:else if copySuccess === 'ok'}
 															<Check class="w-4 h-4 text-green-500" />
 														{:else}
 															<Copy class="w-4 h-4" />
@@ -1899,7 +1935,14 @@
 															onclick={() => copyCommand(pendingToken!)}
 															title="Copy command"
 														>
-															{#if copyCmdSuccess}
+															{#if copyCmdSuccess === 'error'}
+																<Tooltip.Root open>
+																	<Tooltip.Trigger>
+																		<XCircle class="w-3 h-3 text-red-500" />
+																	</Tooltip.Trigger>
+																	<Tooltip.Content>Copy requires HTTPS</Tooltip.Content>
+																</Tooltip.Root>
+															{:else if copyCmdSuccess === 'ok'}
 																<Check class="w-3 h-3 text-green-600" />
 															{:else}
 																<Copy class="w-3 h-3" />
@@ -1936,7 +1979,14 @@
 														class="font-mono text-xs flex-1"
 													/>
 													<Button variant="outline" size="sm" onclick={() => copyToken(generatedToken!)}>
-														{#if copySuccess}
+														{#if copySuccess === 'error'}
+															<Tooltip.Root open>
+																<Tooltip.Trigger>
+																	<XCircle class="w-4 h-4 text-red-500" />
+																</Tooltip.Trigger>
+																<Tooltip.Content>Copy requires HTTPS</Tooltip.Content>
+															</Tooltip.Root>
+														{:else if copySuccess === 'ok'}
 															<Check class="w-4 h-4 text-green-500" />
 														{:else}
 															<Copy class="w-4 h-4" />
@@ -1952,7 +2002,14 @@
 															onclick={() => copyCommand(generatedToken!)}
 															title="Copy command"
 														>
-															{#if copyCmdSuccess}
+															{#if copyCmdSuccess === 'error'}
+																<Tooltip.Root open>
+																	<Tooltip.Trigger>
+																		<XCircle class="w-3 h-3 text-red-500" />
+																	</Tooltip.Trigger>
+																	<Tooltip.Content>Copy requires HTTPS</Tooltip.Content>
+																</Tooltip.Root>
+															{:else if copyCmdSuccess === 'ok'}
 																<Check class="w-3 h-3 text-green-600" />
 															{:else}
 																<Copy class="w-3 h-3" />
@@ -2033,6 +2090,10 @@
 						bind:collectActivity={formCollectActivity}
 						bind:collectMetrics={formCollectMetrics}
 						bind:highlightChanges={formHighlightChanges}
+						bind:diskWarningEnabled={formDiskWarningEnabled}
+						bind:diskWarningMode={formDiskWarningMode}
+						bind:diskWarningThreshold={formDiskWarningThreshold}
+						bind:diskWarningThresholdGb={formDiskWarningThresholdGb}
 					/>
 				</Tabs.Content>
 
