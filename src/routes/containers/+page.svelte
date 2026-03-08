@@ -1932,14 +1932,13 @@
 									<CircleArrowUp class="w-3 h-3 text-amber-500 {$appSettings.highlightUpdates ? 'glow-amber' : ''}" />
 								</button>
 							{/if}
-							{@const webUiUrl = getWebUiUrl(container.labels)}
-							{#if webUiUrl}
+							{#if getWebUiUrl(container.labels)}
 								<a
-									href={webUiUrl}
+									href={getWebUiUrl(container.labels)}
 									target="_blank"
 									rel="noopener noreferrer"
 									onclick={(e) => e.stopPropagation()}
-									title="Open WebUI: {webUiUrl}"
+									title="Open WebUI: {getWebUiUrl(container.labels)}"
 									class="p-0.5 rounded hover:bg-muted transition-colors opacity-70 hover:opacity-100 cursor-pointer"
 								>
 									<Globe class="w-3 h-3 text-blue-500 hover:text-blue-400" />
