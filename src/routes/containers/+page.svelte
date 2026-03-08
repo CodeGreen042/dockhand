@@ -61,7 +61,8 @@
 		Cable,
 		Copy,
 		Loader2,
-		AlertCircle
+		AlertCircle,
+		Globe
 	} from 'lucide-svelte';
 	import { broom } from '@lucide/lab';
 	import { copyToClipboard } from '$lib/utils/clipboard';
@@ -1171,6 +1172,46 @@
 		return ip || '-';
 	}
 
+	function getContainerIps(networks: ContainerInfo['networks'], labels: Record<string, string>): string[] {
+		const ips = new Set<string>();
+		if (networks) {
+			for (const [, net] of Object.entries(networks)) {
+				if (net?.ipAddress) ips.add(net.ipAddress);
+			}
+		}
+		const extraIps = labels?.['dockhand.ips'];
+		if (extraIps) {
+			for (const ip of extraIps.split(',')) {
+				const trimmed = ip.trim();
+				if (trimmed) ips.add(trimmed);
+			}
+		}
+		if (ips.size === 0) return [];
+		return [...ips].sort((a, b) => ipToNumber(a) - ipToNumber(b));
+	}
+
+	interface LabelPort {
+		port: number;
+		url: string | null;
+	}
+
+	function getLabelPorts(labels: Record<string, string>, networks: ContainerInfo['networks']): LabelPort[] {
+		const portsLabel = labels?.['dockhand.ports'];
+		if (!portsLabel) return [];
+		const ip = getContainerIp(networks);
+		return portsLabel.split(',')
+			.map(s => parseInt(s.trim(), 10))
+			.filter(p => !isNaN(p) && p > 0)
+			.map(port => ({
+				port,
+				url: ip && ip !== '-' ? `http://${ip}:${port}` : null
+			}));
+	}
+
+	function getWebUiUrl(labels: Record<string, string>): string | null {
+		return labels?.['net.unraid.docker.webui'] || null;
+	}
+
 	function formatUptime(status: string): string {
 		// Extract uptime from status like "Up 2 hours" or "Exited (0) 3 days ago"
 		if (!status) return '-';
@@ -1788,9 +1829,19 @@
 							{/if}
 						</div>
 					{:else if column.id === 'ip'}
-						<code class="text-xs">{getContainerIp(container.networks)}</code>
+						{@const ips = getContainerIps(container.networks, container.labels)}
+						{#if ips.length > 0}
+							<div class="flex flex-col gap-0">
+								{#each ips as ip}
+									<code class="text-xs leading-tight">{ip}</code>
+								{/each}
+							</div>
+						{:else}
+							<code class="text-xs">-</code>
+						{/if}
 					{:else if column.id === 'ports'}
-						{#if ports.length > 0}
+						{@const labelPorts = getLabelPorts(container.labels, container.networks)}
+						{#if ports.length > 0 || labelPorts.length > 0}
 							<div class="flex flex-wrap gap-1">
 								{#each ports as port}
 									{@const url = currentEnvDetails ? getPortUrl(port.publicPort) : null}
@@ -1808,6 +1859,23 @@
 										</a>
 									{:else}
 										<code class="text-xs bg-muted px-1 py-0.5 rounded">{port.display}</code>
+									{/if}
+								{/each}
+								{#each labelPorts as lport}
+									{#if lport.url}
+										<a
+											href={lport.url}
+											target="_blank"
+											rel="noopener noreferrer"
+											onclick={(e) => e.stopPropagation()}
+											class="inline-flex items-center gap-0.5 text-xs bg-muted hover:bg-blue-500/20 hover:text-blue-500 px-1 py-0.5 rounded transition-colors"
+											title="Open {lport.url} in new tab"
+										>
+											<code>{lport.port}</code>
+											<ExternalLink class="w-2.5 h-2.5 text-muted-foreground" />
+										</a>
+									{:else}
+										<code class="text-xs bg-muted px-1 py-0.5 rounded">{lport.port}</code>
 									{/if}
 								{/each}
 							</div>
@@ -1863,6 +1931,19 @@
 								>
 									<CircleArrowUp class="w-3 h-3 text-amber-500 {$appSettings.highlightUpdates ? 'glow-amber' : ''}" />
 								</button>
+							{/if}
+							{@const webUiUrl = getWebUiUrl(container.labels)}
+							{#if webUiUrl}
+								<a
+									href={webUiUrl}
+									target="_blank"
+									rel="noopener noreferrer"
+									onclick={(e) => e.stopPropagation()}
+									title="Open WebUI: {webUiUrl}"
+									class="p-0.5 rounded hover:bg-muted transition-colors opacity-70 hover:opacity-100 cursor-pointer"
+								>
+									<Globe class="w-3 h-3 text-blue-500 hover:text-blue-400" />
+								</a>
 							{/if}
 							{#if !container.systemContainer}
 							{#if container.state === 'running' || container.state === 'restarting'}
