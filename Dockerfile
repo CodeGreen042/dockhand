@@ -76,8 +76,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && cp "$(dpkg -L libnss-wrapper | grep 'libnss_wrapper\.so$')" /usr/local/lib/libnss_wrapper.so
 
 # Copy package files and install dependencies
-COPY package.json package-lock.json ./
-RUN npm ci
+COPY package.json ./
+RUN npm install --package-lock-only && npm ci
 
 # Copy source code and build
 COPY . .
